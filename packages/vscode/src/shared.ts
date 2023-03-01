@@ -3,11 +3,13 @@ import {
 	ConfigurationChangeEvent,
 	ExtensionContext,
 	TextDocument,
-	TextDocumentChangeEvent,
-	ViewColumn,
+  DidChangeTextDocumentParams,
+  TextDocumentContentChange,
+	// TextDocumentChangeEvent,
+	// ViewColumn,
 	window,
 	workspace,
-} from 'vscode';
+} from 'coc.nvim';
 import { BaseLanguageClient, LanguageClientOptions } from 'vscode-languageclient';
 import * as fileReferences from './features/fileReferences';
 
@@ -42,8 +44,6 @@ export function getInitOptions(env: 'node' | 'browser', typescript: any): Langua
 		initializationOptions: {
 			typescript,
 			environment: env,
-			dontFilterIncompleteCompletions: true, // VSCode filters client side and is smarter at it than us
-			isTrusted: workspace.isTrusted,
 		},
 	};
 }
@@ -55,48 +55,37 @@ export function commonActivate(context: ExtensionContext, client: BaseLanguageCl
 
 	// Restart the language server if any critical files that are outside our jurisdiction got changed (tsconfig, jsconfig etc)
 	workspace.onDidSaveTextDocument(async (doc: TextDocument) => {
-		const fileName = doc.fileName.split(/\/|\\/).pop() ?? doc.fileName;
+		const fileName = doc.uri.split(/\/|\\/).pop() ?? doc.uri;
 		if ([/^tsconfig\.json$/, /^jsconfig\.json$/].some((regex) => regex.test(fileName))) {
 			await restartClient(false);
 		}
 	});
 
 	// Handle unsaved changes for non-Astro files like TypeScript does
-	workspace.onDidChangeTextDocument((params: TextDocumentChangeEvent) => {
-		if (
-			supportedFileExtensions.filter((ext) => ext !== 'astro').some((ext) => params.document.fileName.endsWith(ext))
-		) {
-			// For [j|t]sconfig, we currently handle updates by restarting the client as we need to rebuild the TypeScript
-			// language service whenever the config changes. In the future the server will handle this by itself, but for now
-			// we can't update the snapshot for those files without causing an error since the client tries to
-			// reload and send the notification at the same time
-			const fileName = params.document.fileName.split(/\/|\\/).pop() ?? params.document.fileName;
-			if (
-				['json', 'jsonc'].includes(params.document.languageId) &&
-				(fileName.startsWith('tsconfig') || fileName.startsWith('jsconfig'))
-			) {
-				return;
-			}
-
-			// Partial updates are only supported for files TypeScript natively understand. For svelte and vue files, we'll
-			// instead send the full text and recreate a snapshot server-side with the new content
-			const supportPartialUpdate = !['vue', 'svelte'].includes(params.document.languageId);
-			getLSClient().sendNotification('$/onDidChangeNonAstroFile', {
-				uri: params.document.uri.toString(true),
-				...(supportPartialUpdate
-					? {
-							changes: params.contentChanges.map((c) => ({
-								range: {
-									start: { line: c.range.start.line, character: c.range.start.character },
-									end: { line: c.range.end.line, character: c.range.end.character },
-								},
-								text: c.text,
-							})),
-					  }
-					: { text: params.document.getText() }),
-			});
-		}
-	});
+	// workspace.onDidChangeTextDocument((params: DidChangeTextDocumentParams) => {
+	// 	if (
+	// 		supportedFileExtensions.filter((ext) => ext !== 'astro').some((ext) => params.textDocument.uri.endsWith(ext))
+	// 	) {
+	// 		// Partial updates are only supported for files TypeScript natively understand. For svelte and vue files, we'll
+	// 		// instead send the full text and recreate a snapshot server-side with the new content
+	// 		const supportPartialUpdate = !['vue', 'svelte'].includes(params.document.languageId);
+	// 		getLSClient().sendNotification('$/onDidChangeNonAstroFile', {
+	// 			uri: params.textDocument.uri,
+	// 			...(supportPartialUpdate
+	// 				? {
+	// 						changes: params.contentChanges.map((c: TextDocumentContentChange) => ({
+	// 							range: {
+	// 								start: { line: c.range.start.line, character: c.range.start.character },
+	// 								end: { line: c.range.end.line, character: c.range.end.character },
+	// 							},
+	// 							text: c.text,
+	// 						})),
+	// 				  }
+	// 				// : { text: params.document.getText() }),
+	// 				: { text: fs.readFileSync(params.textDocument.uri) }),
+	// 		});
+	// 	}
+	// });
 
 	context.subscriptions.push(
 		commands.registerCommand('astro.restartLanguageServer', async (showNotification = true) => {
